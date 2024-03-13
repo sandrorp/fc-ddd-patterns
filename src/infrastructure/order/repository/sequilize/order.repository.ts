@@ -1,103 +1,101 @@
-import { Order } from '../../../../domain/checkout/entity/order';
-import { OrderItem } from '../../../../domain/checkout/entity/order_item';
-import { OrderRepositoryInterface } from '../../../../domain/checkout/repository/order-repository.interface'
-import { OrderItemModel } from './order-item.model';
-import { OrderModel } from './order.model';
+import Order from "../../../../domain/checkout/entity/order";
+import OrderItem from "../../../../domain/checkout/entity/order_item";
+import OrderRepositoryInterface from "../../../../domain/checkout/repository/order-repository.interface";
+import OrderItemModel from "./order-item.model";
+import OrderModel from "./order.model";
 
-export class OrderRepository implements OrderRepositoryInterface {
+export default class OrderRepository implements OrderRepositoryInterface {
   async create(entity: Order): Promise<void> {
     await OrderModel.create(
       {
         id: entity.id,
-        customer_id: entity.customer_id,
+        customer_id: entity.customerId,
         total: entity.total(),
-        items: entity.items.map(item => ({
+        items: entity.items.map((item) => ({
           id: item.id,
           name: item.name,
           price: item.price,
+          product_id: item.productId,
           quantity: item.quantity,
-          product_id: item.product_id,
         })),
       },
-      { include: [{ model: OrderItemModel }] },
+      {
+        include: [{ model: OrderItemModel }],
+      }
     );
   }
 
   async update(entity: Order): Promise<void> {
-    // atualiza os itens do pedido
-    const ordemItems = entity.items.map(item => ({
-      id: item.id,
-      name: item.name,
-      price: item.price,
-      product_id: item.product_id,
-      quantity: item.quantity,
-      order_id: entity.id,
-    }));
-
-    // remove os itens existentes
-    await OrderItemModel.destroy({
+    const items = await OrderItemModel.findAll({
       where: { order_id: entity.id },
     });
 
-    // cria os itens atualizados
-    await OrderItemModel.bulkCreate(ordemItems);
+    for (const item of items) {
+      if (!entity.items.find((e) => e.id === item.id)) {
+        await OrderItemModel.destroy({ where: { id: item.id } });
+      }
+    }
 
-    // atualiza o total do pedido
+    for (const item of entity.items) {
+      await OrderItemModel.upsert({
+      id: item.id,
+      name: item.name,
+      price: item.price,
+        product_id: item.productId,
+      quantity: item.quantity,
+      order_id: entity.id,
+    });
+    }
+
     await OrderModel.update(
-      { total: entity.total() },
-      { where: { id: entity.id } },
+      {
+        total: entity.total(),
+      },
+      {
+        where: { id: entity.id },
+      }
     );
   }
 
   async find(id: string): Promise<Order> {
-    let orderModel;
-    try {
-      orderModel = await OrderModel.findOne({
+    const orderModel = await OrderModel.findOne({
         where: { id },
         rejectOnEmpty: true,
-        include: ['items'],
+      include: [{ model: OrderItemModel }],
       });
-    } catch (error) {
-      throw new Error('Order not found');
-    }
 
-    const items = orderModel.items.map(item => {
-      return new OrderItem(
+    const orderItems = orderModel.items.map((item) => {
+      const orderItem = new OrderItem(
         item.id,
         item.name,
-        item.price,
+        item.price / item.quantity,
         item.product_id,
-        item.quantity,
+        item.quantity
       );
+
+      return orderItem;
     });
 
-    const order = new Order(id, orderModel.customer_id, items);
-
-    return order;
+    return new Order(orderModel.id, orderModel.customer_id, orderItems);
   }
 
   async findAll(): Promise<Order[]> {
-    let orderModel;
-    try {
-      orderModel = await OrderModel.findAll({
-        include: ['items'],
+    const orderModels = await OrderModel.findAll({
+      include: [{ model: OrderItemModel }],
       });
-    } catch (error) {
-      throw new Error('Order not found');
-    }
 
-    const orders = orderModel.map(order => {
-      const items = order.items.map(item => {
+    const orders = orderModels.map((orderModel) => {
+      const orderItems = orderModel.items.map((item): OrderItem => {
         return new OrderItem(
           item.id,
           item.name,
-          item.price,
+          item.price / item.quantity,
           item.product_id,
-          item.quantity,
+          item.quantity
         );
       });
 
-      return new Order(order.id, order.customer_id, items);
+      return new Order(orderModel.id, orderModel.customer_id, orderItems);
     });
 
     return orders;
